@@ -191,8 +191,8 @@ EditableTable.prototype.configureCell = function(cell, index) {
         .attr('data-index', index)
         .on('mousedown', this.onCellMouseDown.bind(this)) // Set the active cell and begin dragging to allow for multiple cell selection.
         .on('mouseup', this.onCellMouseUp.bind(this)) // End dragging for multiple cell selection.
-        .on('mouseover', this.onCellMouseOver.bind(this)); // If dragging, calculate cells considered "selected".
-        // .on('paste', this.onCellPaste.bind(this));
+        .on('mouseover', this.onCellMouseOver.bind(this)) // If dragging, calculate cells considered "selected".
+        .on('paste', this.onCellPaste.bind(this));
 };
 
 EditableTable.prototype.onDocumentMouseUp = function(event) {
@@ -285,18 +285,25 @@ EditableTable.prototype.onTableKeyDown = function(event) {
                     navigator.clipboard.writeText(text);
                     break;
                 } else if (event.keyCode === 86) { // v
+                    // Attempt to read text from the clipboard and paste
+                    // it in the currently selected cell. This may result
+                    // in the user being prompted to allow the website to
+                    // read the clipboard contents.
                     navigator.clipboard.readText()
                         .then(function (text) {
-
-
-                            console.log('paste');
-                            console.log(text);
-
-
-                        })
+                            this.parsePastedText(text);
+                        }.bind(this))
                         .catch(function (err) {
                             throw err;
                         });
+
+                    // Prevent the default logic so we don't accidentally paste
+                    // the content twice. We have to handle pasting like this because
+                    // the paste event doesn't fire in Safari when using cmd + v
+                    // because this keydown event on the table kills the propagation
+                    // event when "event.preventDefault()" and "event.stopPropagation()"
+                    // are not called. But we left the paste event in place to handle
+                    // pasting via the context menu.
                     event.preventDefault();
                     break;
                 }
@@ -556,11 +563,6 @@ EditableTable.prototype.cleanseCellValue = function(value) {
 };
 
 EditableTable.prototype.onCellPaste = function(event) {
-
-
-    console.log('onCellPaste');
-
-
     // If we fail to get the data from the clipboard we will end our
     // custom logic and let the browser handle the default logic.
     var text;
@@ -570,13 +572,13 @@ EditableTable.prototype.onCellPaste = function(event) {
         return;
     }
 
-
-    console.log('text:', text);
-
-
     // Prevent the default paste logic.
     event.preventDefault();
 
+    this.parsePastedText(text);
+};
+
+EditableTable.prototype.parsePastedText = function(text) {
     if (text.match(/\t|\n/)) { // Data being pasted is in the multiple cell format.
         // Prevent the default paste logic so we can parse the text
         // and put it into multiple cells.
