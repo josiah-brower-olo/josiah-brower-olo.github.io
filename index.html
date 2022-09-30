@@ -134,9 +134,7 @@ Object.defineProperty(EditableTable.prototype, 'table', {
         return this.__table;
     },
     set: function(value) {
-        this.__table = value
-            .on('keypress', this.onTableKeyPress.bind(this));
-            // .on('keydown', this.onTableKeyDown.bind(this));
+        this.__table = value;// .on('keydown', this.onTableKeyDown.bind(this));
     },
 });
 
@@ -215,12 +213,6 @@ EditableTable.prototype.onDocumentMouseUp = function(event) {
         this.onActiveCellBlur({
             target: this.table.find('td[data-index="' + this.activeIndex + '"]').get(0)
         });
-    }
-};
-
-EditableTable.prototype.onTableKeyPress = function(event) {
-    if (isNaN(String.fromCharCode(event.which)) || event.which === 32) { // not a number, or a space
-        event.preventDefault();
     }
 };
 
