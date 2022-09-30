@@ -134,7 +134,7 @@ Object.defineProperty(EditableTable.prototype, 'table', {
         return this.__table;
     },
     set: function(value) {
-        this.__table = value;// .on('keydown', this.onTableKeyDown.bind(this));
+        this.__table = value.on('keydown', this.onTableKeyDown.bind(this));
     },
 });
 
@@ -191,8 +191,8 @@ EditableTable.prototype.configureCell = function(cell, index) {
         .attr('data-index', index)
         .on('mousedown', this.onCellMouseDown.bind(this)) // Set the active cell and begin dragging to allow for multiple cell selection.
         .on('mouseup', this.onCellMouseUp.bind(this)) // End dragging for multiple cell selection.
-        .on('mouseover', this.onCellMouseOver.bind(this)) // If dragging, calculate cells considered "selected".
-        .on('paste', this.onCellPaste.bind(this));
+        .on('mouseover', this.onCellMouseOver.bind(this)); // If dragging, calculate cells considered "selected".
+        // .on('paste', this.onCellPaste.bind(this));
 };
 
 EditableTable.prototype.onDocumentMouseUp = function(event) {
@@ -285,6 +285,19 @@ EditableTable.prototype.onTableKeyDown = function(event) {
                     navigator.clipboard.writeText(text);
                     break;
                 } else if (event.keyCode === 86) { // v
+                    navigator.clipboard.readText()
+                        .then(function (text) {
+
+
+                            console.log('paste');
+                            console.log(text);
+
+
+                        })
+                        .catch(function (err) {
+                            throw err;
+                        });
+                    event.preventDefault();
                     break;
                 }
             }
