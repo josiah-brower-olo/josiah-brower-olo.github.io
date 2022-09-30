@@ -561,6 +561,11 @@ EditableTable.prototype.cleanseCellValue = function(value) {
 };
 
 EditableTable.prototype.onCellPaste = function(event) {
+
+
+    console.log('onCellPaste');
+
+
     // If we fail to get the data from the clipboard we will end our
     // custom logic and let the browser handle the default logic.
     var text;
@@ -569,6 +574,10 @@ EditableTable.prototype.onCellPaste = function(event) {
     } catch (err) {
         return;
     }
+
+
+    console.log('text:', text);
+
 
     // Prevent the default paste logic.
     event.preventDefault();
