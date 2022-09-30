@@ -578,47 +578,6 @@ EditableTable.prototype.onCellPaste = function(event) {
     this.parsePastedText(text);
 };
 
-EditableTable.prototype.parsePastedText = function(text) {
-    if (text.match(/\t|\n/)) { // Data being pasted is in the multiple cell format.
-        // Prevent the default paste logic so we can parse the text
-        // and put it into multiple cells.
-        event.preventDefault();
-
-        var data = [[]];
-
-        // Parse the data and separate into rows and columns.
-        text.split('\t').forEach(function (tabValue) {
-
-            tabValue
-                .replace(/""/g, '[DBQT]') // Replace escaped double quotes with a placeholder.
-                .replaceAll(/"[^"]*"/g, function (match) {
-                    return match.replace(/\n/g, '[NWLN]');
-                }) // Replace same-cell newline characters with a placeholder.
-                .replace(/\r/g, '') // Remove carriage return characters because these are not included by some browsers.
-                .split('\n') // Split by the remaining newline characters that represent new rows.
-                .forEach(function (lineValue, index) {
-                    lineValue = lineValue
-                        .replace(/\[DBQT\]/g, '"') // Replace the escaped double quotes.
-                        .replace(/\[NWLN\]/g, '\n'); // Replace the same-cell newline characters.
-
-                    if (index > 0) {
-                        data.push([]);
-                    }
-
-                    data[data.length - 1].push(this.cleanseCellValue(lineValue));
-                }.bind(this));
-        }.bind(this));
-
-        // Paste the data based on the current cell selection.
-        this.paste([].concat(this.selectedList), data);
-
-        return;
-    }
-
-    // Paste the data based on the current cell selection.
-    this.paste([].concat(this.selectedList), [[this.cleanseCellValue(text)]]);
-};
-
 EditableTable.prototype.removeBorderCellClasses = function(cell) {
     cell.removeClass('border-top-left border-top-right border-bottom-right border-bottom-left border-top border-right border-bottom border-left');
     return cell;
@@ -750,6 +709,44 @@ EditableTable.prototype.copy = function(selectedCellIndexes) {
     }, '');
 
     return text;
+};
+
+EditableTable.prototype.parsePastedText = function(text) {
+    if (text.match(/\t|\n/)) { // Data being pasted is in the multiple cell format.
+        // Prevent the default paste logic so we can parse the text
+        // and put it into multiple cells.
+        var data = [[]];
+
+        // Parse the data and separate into rows and columns.
+        text.split('\t').forEach(function (tabValue) {
+            tabValue
+                .replace(/""/g, '[DBQT]') // Replace escaped double quotes with a placeholder.
+                .replaceAll(/"[^"]*"/g, function (match) {
+                    return match.replace(/\n/g, '[NWLN]');
+                }) // Replace same-cell newline characters with a placeholder.
+                .replace(/\r/g, '') // Remove carriage return characters because these are not included by some browsers.
+                .split('\n') // Split by the remaining newline characters that represent new rows.
+                .forEach(function (lineValue, index) {
+                    lineValue = lineValue
+                        .replace(/\[DBQT\]/g, '"') // Replace the escaped double quotes.
+                        .replace(/\[NWLN\]/g, '\n'); // Replace the same-cell newline characters.
+
+                    if (index > 0) {
+                        data.push([]);
+                    }
+
+                    data[data.length - 1].push(this.cleanseCellValue(lineValue));
+                }.bind(this));
+        }.bind(this));
+
+        // Paste the data based on the current cell selection.
+        this.paste([].concat(this.selectedList), data);
+
+        return;
+    }
+
+    // Paste the data based on the current cell selection.
+    this.paste([].concat(this.selectedList), [[this.cleanseCellValue(text)]]);
 };
 
 /**
