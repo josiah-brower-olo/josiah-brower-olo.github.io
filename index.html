@@ -1,0 +1,987 @@
+<html lang="en-US">
+    <head>
+        <style>
+/**
+ * Table specific styles.
+ */
+.editable-cell-inactive {
+    outline: 0px solid transparent;
+}
+
+td.quick-copy {}
+    td.quick-copy.border-top-left {
+        border-left: 1px dashed #555;
+        border-top: 1px dashed #555;
+    }
+    td.quick-copy.border-top {
+        border-top: 1px dashed #555;
+    }
+    td.quick-copy.border-top-right {
+        border-right: 1px dashed #555;
+        border-top: 1px dashed #555;
+    }
+    td.quick-copy.border-right {
+        border-right: 1px dashed #555;
+    }
+    td.quick-copy.border-bottom-right {
+        border-bottom: 1px dashed #555;
+        border-right: 1px dashed #555;
+    }
+    td.quick-copy.border-bottom {
+        border-bottom: 1px dashed #555;
+    }
+    td.quick-copy.border-bottom-left {
+        border-bottom: 1px dashed #555;
+        border-left: 1px dashed #555;
+    }
+    td.quick-copy.border-left {
+        border-left: 1px dashed #555;
+    }
+
+td.selected {
+    background-color: #E7F0FD;
+}
+    td.selected.border-top-left {
+        border-left: 1px solid #1A73E8;
+        border-top: 1px solid #1A73E8;
+    }
+    td.selected.border-top {
+        border-top: 1px solid #1A73E8;
+    }
+    td.selected.border-top-right {
+        border-right: 1px solid #1A73E8;
+        border-top: 1px solid #1A73E8;
+    }
+    td.selected.border-right {
+        border-right: 1px solid #1A73E8;
+    }
+    td.selected.border-bottom-right {
+        border-bottom: 1px solid #1A73E8;
+        border-right: 1px solid #1A73E8;
+    }
+    td.selected.border-bottom {
+        border-bottom: 1px solid #1A73E8;
+    }
+    td.selected.border-bottom-left {
+        border-bottom: 1px solid #1A73E8;
+        border-left: 1px solid #1A73E8;
+    }
+    td.selected.border-left {
+        border-left: 1px solid #1A73E8;
+    }
+
+td:focus-visible {
+    outline: none;
+}
+
+td.active {
+    background-color: #E7F0FD;
+    border: 2px solid #1A73E8;
+    outline: none;
+}
+
+.quick-copy-square {
+    background-color: #1A73E8;
+    border: 1px solid white;
+    cursor: crosshair;
+    display: none;
+    height: 5px;
+    position: absolute;
+    transform:
+        translate(-50%, -50%) /* Offset to center the element. */
+        translateX(-189px) /* Offset based on the left margin of the #MainContent parent container. */
+        translateY(-48px) /* Offset based on the height of the top navigation bar. */
+        translate(-2px, -2px); /* Offset for border width. */
+    width: 5px;
+    z-index: 1;
+}
+
+/**
+ * Overriding a few page styles to make sure the full table
+ * is visible on screens 1024px and wider.
+ */
+div.well {
+    max-width: 1000px;
+    min-width: 750px;
+    width: auto;
+}
+    div.well > div.container {
+        width: 100%;
+    }
+        </style>
+        <script src="https://code.jquery.com/jquery-3.6.1.min.js" integrity="sha256-o88AwQnZB+VDvE9tvIXrMQaPlFFSUTR+nldQm1LuPXQ=" crossorigin="anonymous"></script>
+        <script>
+function EditableTable(numColumns) {
+    this.activeCell = null;
+    this.activeIndex = null;
+    this.isDragging = false;
+    this.isDraggingTimeout = undefined;
+    this.isQuickCopying = false;
+    this.numColumns = numColumns;
+    this.overIndex = null;
+    this.quickCopyList = [];
+    this.selectedList = [];
+
+    this.__eventListeners = {};
+    this.__table = null;
+    this.__quickCopy = null;
+
+    $(document).on('mouseup', this.onDocumentMouseUp.bind(this));
+}
+
+Object.defineProperty(EditableTable.prototype, 'table', {
+    get: function() {
+        return this.__table;
+    },
+    set: function(value) {
+        this.__table = value
+            .on('keypress', this.onTableKeyPress.bind(this))
+            .on('keydown', this.onTableKeyDown.bind(this));
+    },
+});
+
+Object.defineProperty(EditableTable.prototype, 'quickCopy', {
+    get: function() {
+        return this.__quickCopy;
+    },
+    set: function(value) {
+        this.__quickCopy = value.on('mousedown', this.onQuickCopyMouseDown.bind(this));
+    },
+});
+
+EditableTable.prototype.addEventListener = function(event, callback) {
+    if (!Array.isArray(this.__eventListeners[event])) {
+        this.__eventListeners[event] = [];
+    }
+
+    if (this.__eventListeners[event].indexOf(callback) >= 0) {
+        return;
+    }
+
+    this.__eventListeners[event].push(callback);
+};
+
+EditableTable.prototype.removeEventListener = function(event, callback) {
+    if (!Array.isArray(this.__eventListeners[event])) {
+        return;
+    }
+
+    var callbackIndex = this.__eventListeners[event].indexOf(callback);
+    if (callbackIndex === -1) {
+        return;
+    }
+
+    this.__eventListeners[event].splice(callbackIndex, 1);
+};
+
+EditableTable.prototype.triggerEvent = function(event, props) {
+    if (!Array.isArray(this.__eventListeners[event])) {
+        return;
+    }
+
+    this.__eventListeners[event].forEach(function(callback) {
+        if (typeof callback !== 'function') {
+            return;
+        }
+
+        callback(props);
+    });
+};
+
+EditableTable.prototype.configureCell = function(cell, index) {
+    return cell
+        .attr('data-index', index)
+        .on('mousedown', this.onCellMouseDown.bind(this)) // Set the active cell and begin dragging to allow for multiple cell selection.
+        .on('mouseup', this.onCellMouseUp.bind(this)) // End dragging for multiple cell selection.
+        .on('mouseover', this.onCellMouseOver.bind(this)) // If dragging, calculate cells considered "selected".
+        .on('paste', this.onCellPaste.bind(this));
+};
+
+EditableTable.prototype.onDocumentMouseUp = function(event) {
+    this.isDragging = false;
+
+    if (this.isQuickCopying) {
+        var data = this.generateTwoDimensionalArray(this.selectedList, function (cellIndex) {
+            return this.table.find('td[data-index="' + cellIndex + '"]').html();
+        }.bind(this));
+
+        // Paste the data based on the current cell selection.
+        this.paste([].concat(this.quickCopyList), data);
+
+        this.isQuickCopying = false;
+
+        // If we were quick copying the blur event for the active cell was
+        // ignored, so we need to trigger the logic manually.
+        this.onActiveCellBlur({
+            target: this.table.find('td[data-index="' + this.activeIndex + '"]').get(0)
+        });
+    }
+};
+
+EditableTable.prototype.onTableKeyPress = function(event) {
+    if (isNaN(String.fromCharCode(event.which)) || event.which === 32) { // not a number, or a space
+        event.preventDefault();
+    }
+};
+
+EditableTable.prototype.onTableKeyDown = function(event) {
+    var rows = this.table.find('tr').length - 1;
+    var start = 0;
+    var activeIndex = this.activeIndex; // Using a local variable to track the active index in case the move is invalid.
+
+    switch (event.keyCode) {
+        case 37: { // move left or wrap
+            event.preventDefault();
+            activeIndex = (activeIndex > 0) ? activeIndex - 1 : activeIndex;
+            while (this.table.find('tr td:eq(' + activeIndex + ')').html() === "closed" || (activeIndex % this.numColumns === 0 && activeIndex !== 0)) {
+                activeIndex = activeIndex - 1;
+            }
+            this.moveActive(activeIndex, true);
+            break;
+        }
+        case 38: { // move up
+            event.preventDefault();
+            activeIndex = (activeIndex - this.numColumns >= 0) ? activeIndex - this.numColumns : activeIndex;
+            start = activeIndex + this.numColumns;
+            while (this.table.find('tr td:eq(' + activeIndex + ')').html() === "closed") {
+                activeIndex = (activeIndex - this.numColumns >= 0) ? activeIndex - this.numColumns : start;
+            }
+            this.moveActive(activeIndex, true);
+            break;
+        }
+        case 39: { // move right or wrap
+            event.preventDefault();
+            activeIndex = (activeIndex < (this.numColumns * rows) - 1) ? activeIndex + 1 : activeIndex;
+            while (this.table.find('tr td:eq(' + activeIndex + ')').html() === "closed" || activeIndex % this.numColumns === 0) {
+                activeIndex = activeIndex + 1;
+            }
+            this.moveActive(activeIndex, true);
+            break;
+        }
+        case 40: { // move down
+            event.preventDefault();
+            activeIndex = (activeIndex + this.numColumns <= (rows * this.numColumns) - 1) ? activeIndex + this.numColumns : activeIndex;
+            start = activeIndex - this.numColumns;
+            while (this.table.find('tr td:eq(' + activeIndex + ')').html() === "closed") {
+                activeIndex = (activeIndex + this.numColumns <= (rows * this.numColumns) - 1) ? activeIndex + this.numColumns : start;
+            }
+            this.moveActive(activeIndex, true);
+            break;
+        }
+        case 9: { // tab
+            event.preventDefault();
+            activeIndex = (activeIndex < (this.numColumns * rows) - 1) ? activeIndex + 1 : activeIndex;
+            while (this.table.find('tr td:eq(' + activeIndex + ')').html() === "closed" || activeIndex % this.numColumns === 0) {
+                activeIndex = activeIndex + 1;
+            }
+            this.moveActive(activeIndex, true);
+            break;
+        }
+        case 8: { // backspace
+            break;
+        }
+        case 67: // c
+        case 86: // v
+        default: {
+            // If the ctrl or cmd key is down the user may be trying
+            // to copy or paste.
+            if (event.ctrlKey || event.metaKey) {
+                if (event.keyCode === 67) { // c
+                    // Copy the currently selected cell data.
+                    var text = this.copy([].concat(this.selectedList));
+
+                    navigator.clipboard.writeText(text);
+                    break;
+                } else if (event.keyCode === 86) { // v
+                    break;
+                }
+            }
+
+            // Last, if the value being entered is not a number we
+            // should prevent it from being entered into the cell.
+            if (!isFinite(event.key)) {
+                event.preventDefault();
+            }
+            break;
+        }
+    }
+};
+
+EditableTable.prototype.onQuickCopyMouseDown = function(event) {
+    // Prevent the default logic so text isn't selected
+    // while dragging to quick copy.
+    event.preventDefault();
+
+    this.isQuickCopying = true;
+};
+
+EditableTable.prototype.onCellMouseDown = function(event) {
+    var cell = $(event.target);
+
+    // Make sure the move is valid before updating cell
+    // properties, styles, etc.
+    if (!this.moveActive(cell.data('index'), false)) {
+        return;
+    }
+
+    if (this.activeCell) {
+        this.activeCell.off('blur');
+    }
+
+    this.removeSelectedCellClasses(
+        this.removeBorderCellClasses(
+            this.table.find('td')
+        )
+    );
+
+    cell
+        .closest('table')
+        .find('td')
+        .on('blur', this.onActiveCellBlur.bind(this));
+
+    this.activeCell = this.table.find('td[data-index="' + this.activeIndex + '"]');
+    this.selectedList = [this.activeIndex];
+
+    this.showQuickCopy(this.activeIndex);
+
+    // Wait a brief moment before starting the drag logic to
+    // prevent strange behavior when user is intending to
+    // only click on a cell.
+    this.isDraggingTimeout = setTimeout(function() {
+        this.isDragging = true;
+    }.bind(this), 300);
+};
+
+EditableTable.prototype.onCellMouseUp = function(event) {
+    clearTimeout(this.isDraggingTimeout);
+
+    this.overIndex = 0;
+    this.isDragging = false;
+};
+
+EditableTable.prototype.onCellMouseOver = function(event) {
+    var index = parseInt($(event.target).data('index'), 10);
+    var hasOverIndexChanged = this.overIndex !== index;
+
+    this.overIndex = index;
+
+    var forEachBoundingCell = function(handle) {
+        // Calculate which cells should be highlighted based
+        // on the currently active cell and which cell is
+        // being dragged over.
+        var activeRow = Math.floor(this.activeIndex / this.numColumns);
+        var activeColumn = this.activeIndex - (activeRow * this.numColumns);
+        var overRow = Math.floor(this.overIndex / this.numColumns);
+        var overColumn = this.overIndex - (overRow * this.numColumns);
+
+        var startColumn = Math.min(activeColumn, overColumn);
+        var endColumn = Math.max(activeColumn, overColumn);
+        var startRow = Math.min(activeRow, overRow);
+        var endRow = Math.max(activeRow, overRow);
+
+        var row = startRow;
+        while (row <= endRow) {
+            var column = startColumn;
+            while (column <= endColumn) {
+                var cellIndex = (row * this.numColumns) + column;
+                if (cellIndex !== this.activeIndex) {
+                    var cell = this.table.find('td[data-index="' + cellIndex + '"]');
+                    var props = {
+                        isBottom: false,
+                        isLeft: false,
+                        isRight: false,
+                        isTop: false,
+                    };
+
+                    // Set properties to help identify edge cells.
+                    if (row === startRow) {
+                        props.isTop = true;
+                    }
+
+                    if (column === endColumn) {
+                        props.isRight = true;
+                    }
+
+                    if (row === endRow) {
+                        props.isBottom = true;
+                    }
+
+                    if (column === startColumn) {
+                        props.isLeft = true;
+                    }
+
+                    handle(
+                        cell,
+                        cellIndex,
+                        props
+                    );
+                }
+
+                column++;
+            }
+
+            row++;
+        }
+    }.bind(this);
+
+    if (this.isDragging) { // Dragging to select multiple cells.
+        // Ignore if we are dragging over the same cell.
+        if (!hasOverIndexChanged) {
+            return;
+        }
+
+        // Clear the current selections.
+        this.selectedList = [this.activeIndex];
+        this.removeSelectedCellClasses(
+            this.removeBorderCellClasses(this.table.find('td.selected'))
+        );
+
+        forEachBoundingCell(function (cell, cellIndex, props) {
+            this.selectedList.push(cellIndex);
+
+            cell.addClass('selected');
+
+            // Apply border radius classes for the corner cells.
+            if (props.isTop) {
+                if (props.isLeft) {
+                    cell.addClass('border-top-left');
+                } else if (props.isRight) {
+                    cell.addClass('border-top-right');
+                }
+            } else if (props.isBottom) {
+                if (props.isLeft) {
+                    cell.addClass('border-bottom-left');
+                } else if (props.isRight) {
+                    cell.addClass('border-bottom-right');
+                }
+            }
+
+            // Apply border classes for edge cells.
+            if (props.isTop) {
+                cell.addClass('border-top');
+            }
+
+            if (props.isRight) {
+                cell.addClass('border-right');
+            }
+
+            if (props.isBottom) {
+                cell.addClass('border-bottom');
+            }
+
+            if (props.isLeft) {
+                cell.addClass('border-left');
+            }
+        }.bind(this));
+
+        // Show the quick copy element on the bottom right cell.
+        this.showQuickCopy(
+            this.selectedList.reduce(function (a, b) { return Math.max(a, b); }, 0)
+        );
+    } else if (this.isQuickCopying) { // Dragging to quick copy content from selected cells.
+        // Ignore if we are dragging over the same cell.
+        if (!hasOverIndexChanged) {
+            return;
+        }
+
+        // Clear the current quick copy cells.
+        this.quickCopyList = [this.activeIndex];
+        this.removeQuickCopyCellClasses(
+            this.removeBorderCellClasses(
+                this.table.find('td.quick-copy:not(.selected)')
+            )
+        );
+
+        forEachBoundingCell(function (cell, cellIndex, props) {
+            this.quickCopyList.push(cellIndex);
+
+            cell.addClass('quick-copy');
+
+            // Apply border radius classes for the corner cells.
+            if (props.isTop) {
+                if (props.isLeft) {
+                    cell.addClass('border-top-left');
+                } else if (props.isRight) {
+                    cell.addClass('border-top-right');
+                }
+            } else if (props.isBottom) {
+                if (props.isLeft) {
+                    cell.addClass('border-bottom-left');
+                } else if (props.isRight) {
+                    cell.addClass('border-bottom-right');
+                }
+            }
+
+            // Apply border classes for edge cells.
+            if (props.isTop) {
+                cell.addClass('border-top');
+            }
+
+            if (props.isRight) {
+                cell.addClass('border-right');
+            }
+
+            if (props.isBottom) {
+                cell.addClass('border-bottom');
+            }
+
+            if (props.isLeft) {
+                cell.addClass('border-left');
+            }
+        }.bind(this));
+    }
+};
+
+EditableTable.prototype.cleanseCellValue = function(value) {
+    if (value.indexOf('\n') > -1) { // Cell values only contain new-line characters and not hard-return characters.
+        if (value.startsWith('"')) {
+            value = value.substring(1);
+        }
+
+        if (value.endsWith('"')) {
+            value = value.substring(0, value.length - 1);
+        }
+
+        value = value
+            .replace(/""/g, '"')
+            .replace(/\n/g, ' '); // We don't support multiple lines in one cell so we should remove newline characters.
+    }
+
+    return parseInt(value, 10) + '';
+};
+
+EditableTable.prototype.onCellPaste = function(event) {
+    // If we fail to get the data from the clipboard we will end our
+    // custom logic and let the browser handle the default logic.
+    var text;
+    try {
+        text = (event.originalEvent.clipboardData || window.clipboardData).getData('text');
+    } catch (err) {
+        return;
+    }
+
+    // Prevent the default paste logic.
+    event.preventDefault();
+
+    if (text.match(/\t|\n/)) { // Data being pasted is in the multiple cell format.
+        // Prevent the default paste logic so we can parse the text
+        // and put it into multiple cells.
+        event.preventDefault();
+
+        var data = [[]];
+
+        // Parse the data and separate into rows and columns.
+        text.split('\t').forEach(function (tabValue) {
+
+            tabValue
+                .replace(/""/g, '[DBQT]') // Replace escaped double quotes with a placeholder.
+                .replaceAll(/"[^"]*"/g, function (match) {
+                    return match.replace(/\n/g, '[NWLN]');
+                }) // Replace same-cell newline characters with a placeholder.
+                .replace(/\r/g, '') // Remove carriage return characters because these are not included by some browsers.
+                .split('\n') // Split by the remaining newline characters that represent new rows.
+                .forEach(function (lineValue, index) {
+                    lineValue = lineValue
+                        .replace(/\[DBQT\]/g, '"') // Replace the escaped double quotes.
+                        .replace(/\[NWLN\]/g, '\n'); // Replace the same-cell newline characters.
+
+                    if (index > 0) {
+                        data.push([]);
+                    }
+
+                    data[data.length - 1].push(this.cleanseCellValue(lineValue));
+                }.bind(this));
+        }.bind(this));
+
+        // Paste the data based on the current cell selection.
+        this.paste([].concat(this.selectedList), data);
+
+        return;
+    }
+
+    // Paste the data based on the current cell selection.
+    this.paste([].concat(this.selectedList), [[this.cleanseCellValue(text)]]);
+};
+
+EditableTable.prototype.removeBorderCellClasses = function(cell) {
+    cell.removeClass('border-top-left border-top-right border-bottom-right border-bottom-left border-top border-right border-bottom border-left');
+    return cell;
+};
+
+EditableTable.prototype.removeSelectedCellClasses = function(cell) {
+    cell.removeClass('selected');
+    return cell;
+};
+
+EditableTable.prototype.removeQuickCopyCellClasses = function(cell) {
+    cell.removeClass('quick-copy');
+    return cell;
+};
+
+EditableTable.prototype.onActiveCellBlur = function(event) {
+    // Ignore the blur if we are quick copying.
+    if (this.isQuickCopying) {
+        return;
+    }
+
+    var index = $(event.target).closest('table').find('td').index(event.target);
+    if (index !== this.activeIndex) {
+        return;
+    }
+
+    this.selectedList = [];
+    this.quickCopyList = [];
+
+    this.removeSelectedCellClasses(
+        this.removeQuickCopyCellClasses(
+            this.removeBorderCellClasses(this.table.find('td'))
+        )
+    );
+
+    this.hideQuickCopy();
+
+    this.table.find('.active').removeClass('active');
+};
+
+/**
+ * Show the quick copy element on the cell with
+ * the given index.
+ */
+EditableTable.prototype.showQuickCopy = function(cellIndex) {
+    var cell = this.table.find('td[data-index="' + cellIndex + '"]');
+
+    // Show and position the quick copy element.
+    var cellRect = cell.get(0).getBoundingClientRect();
+
+    this.quickCopy
+        .css('display', 'block')
+        .css('left', (cellRect.x + cellRect.width + window.scrollX) + 'px')
+        .css('top', (cellRect.y + cellRect.height + window.scrollY) + 'px');
+};
+
+/**
+ * Hide the quick copy element.
+ */
+EditableTable.prototype.hideQuickCopy = function() {
+    this.quickCopy.css('display', 'none');
+};
+
+EditableTable.prototype.trimTwoDimensionalArray = function(array) {
+    for (var i = 0; i < array.length; i++) {
+        if (array[i].length === 0) {
+            array.splice(i, 1);
+            i--;
+            continue;
+        }
+
+        for (var x = 0; x < array[i].length; x++) {
+            if (array[i][x] === undefined) {
+                array[i].splice(x, 1);
+                x--;
+                continue;
+            }
+        }
+    }
+
+    return array;
+};
+
+EditableTable.prototype.generateTwoDimensionalArray = function(singleDimensionArray, getValue) {
+    var data = [];
+
+    // Create a multi-dimensional array from first cell of the table
+    // to the last cell of what is copied.
+    singleDimensionArray.forEach(function (index) {
+        var value = getValue(index);
+
+        var rowIndex = Math.floor(index / this.numColumns);
+        var columnIndex = index - (this.numColumns * rowIndex);
+
+        while (rowIndex + 1 > data.length) {
+            data.push([]);
+        }
+
+        while (columnIndex + 1 > data[rowIndex].length) {
+            data[rowIndex].push(undefined);
+        }
+
+        data[rowIndex][columnIndex] = value;
+    }.bind(this));
+
+    return this.trimTwoDimensionalArray(data);
+};
+
+/**
+ * Takes a single-dimensional array of selected cell indexes and
+ * returns a multi-dimensional array of the data in those cells.
+ */
+EditableTable.prototype.copy = function(selectedCellIndexes) {
+    var data = this.generateTwoDimensionalArray(selectedCellIndexes, function (index) {
+        return this.table
+            .find('td[data-index="' + index + '"]')
+            .html();
+    }.bind(this));
+
+    // Format the data the same way Excel, Google Sheets, etc. do to make
+    // it easy to copy data between them.
+    var text = data.reduce(function (prev, curr, index) {
+        var end = index + 1 === data.length
+            ? ''
+            : '\r\n'; // New rows are defined by a hard-return and new-line character.
+        var row = curr.join('\t');
+
+        return prev + row + end;
+    }, '');
+
+    return text;
+};
+
+/**
+ * Takes a single-dimensional array of selected cell indexes and
+ * populates them with the multi-dimensional array of data. If the
+ * number of columns and/or rows is different between the selected
+ * and the data the pasted values will be clipped or repeated. If
+ * only one cell is selected it will be considered the top-left
+ * cell for an automatic selection of cells based on the number
+ * of columns and rows in the data.
+ */
+EditableTable.prototype.paste = function(selectedCellIndexes, data) {
+    var singleStartCellIndex = undefined;
+
+    // Validate the length of the selected cells.
+    if (!Array.isArray(selectedCellIndexes) || selectedCellIndexes.length === 0) {
+        return;
+    } else if (selectedCellIndexes.length === 1) {
+        singleStartCellIndex = selectedCellIndexes[0];
+    }
+
+    // Determine the number of rows and columns contained in the data.
+    var dataNumRows = data.length;
+    var dataNumColumns = data.reduce(function (curr, prev) {
+        return Math.max(curr, prev.length);
+    }, 0);
+
+    // Determine the number of rows and columns contained in the selected cells.
+    var selected = this.generateTwoDimensionalArray(selectedCellIndexes, function (value) {
+        return value;
+    });
+
+    var selectedNumRows = selected.length;
+    var selectedNumColumns = selected.reduce(function (curr, prev) {
+        return Math.max(curr, prev.length);
+    }, 0);
+
+    // If the selection size is smaller than the data size we will
+    // paste the data based on the size of the data.
+    if (dataNumRows >= selectedNumRows && dataNumColumns >= selectedNumColumns) {
+        singleStartCellIndex = selected[0][0];
+    }
+
+    var pasteData = [];
+
+    if (!isNaN(singleStartCellIndex)) { // Paste based on the data size starting at the top left selected cell.
+        // Loop through the parsed data and update the correct cells.
+        data.forEach(function (row, rowIndex) {
+            var tableRowIndex = Math.floor(singleStartCellIndex / this.numColumns) + rowIndex;
+
+            row.forEach(function (cell, columnIndex) {
+                var tableCellIndex = singleStartCellIndex + (rowIndex * this.numColumns) + columnIndex;
+                var tableCellRowIndex = Math.floor(tableCellIndex / this.numColumns);
+
+                // Make sure the current column is in the same row as the
+                // starting column for this row. If you copy 3 columns of
+                // data and try to paste it in the last column of the table
+                // only the first column data will be pasted.
+                if (tableCellRowIndex !== tableRowIndex) {
+                    return;
+                }
+
+                pasteData.push({
+                    index: tableCellIndex,
+                    value: cell,
+                });
+            }.bind(this));
+        }.bind(this));
+    } else { // Paste based on the size of the selected cells.
+        var numRows = Math.max(dataNumRows, selectedNumRows);
+        var numColumns = Math.max(dataNumColumns, selectedNumColumns);
+
+        var rowIndex = 0;
+        while (rowIndex < numRows) {
+            var dataRowIndex;
+            var selectedRowIndex;
+
+            if (rowIndex < data.length) {
+                dataRowIndex = rowIndex;
+            } else {
+                dataRowIndex = rowIndex - (Math.floor(rowIndex / data.length) * data.length);
+            }
+
+            if (rowIndex < selected.length) {
+                selectedRowIndex = rowIndex;
+            } else {
+                selectedRowIndex = rowIndex - (Math.floor(rowIndex / selected.length) * selected.length);
+            }
+
+            var dataRow = data[dataRowIndex];
+            var selectedRow = selected[selectedRowIndex];
+
+            var columnIndex = 0;
+            while (columnIndex < numColumns) {
+                var dataColumnIndex;
+                var selectedCellIndex;
+
+                if (columnIndex < dataRow.length) {
+                    dataColumnIndex = columnIndex;
+                } else {
+                    dataColumnIndex = columnIndex - (Math.floor(columnIndex / dataRow.length) * dataRow.length);
+                }
+
+                if (columnIndex < selectedRow.length) {
+                    selectedCellIndex = selectedRow[columnIndex];
+                } else {
+                    selectedCellIndex = selectedRow[selectedRow.length - 1] + (columnIndex - (selectedRow.length - 1));
+                }
+
+                var selectedRowNum = Math.floor(selectedRow[selectedRow.length - 1] / this.numColumns);
+                if (selectedRowIndex < rowIndex) {
+                    var rowOffset = (rowIndex - selectedRowIndex);
+
+                    selectedCellIndex += this.numColumns * rowOffset;
+                    selectedRowNum += rowOffset;
+                }
+
+                var selectedCellRowNum = Math.floor(selectedCellIndex / this.numColumns);
+                if (selectedRowNum !== selectedCellRowNum) {
+                    columnIndex++;
+                    continue;
+                }
+
+                pasteData.push({
+                    index: selectedCellIndex,
+                    value: dataRow[dataColumnIndex],
+                });
+
+                columnIndex++;
+            }
+
+            rowIndex++;
+        }
+    }
+
+    this.pasteValues(pasteData);
+};
+
+EditableTable.prototype.pasteValues = function(data) {
+    data.forEach(function (cell) {
+        var cellValue = cell.value;
+
+        // Ignore non-number values.
+        if (!isFinite(cellValue)) {
+            return;
+        }
+
+        // Update the cell value.
+        this.table.find('td[data-index="' + cell.index + '"]').html(cellValue);
+
+        // Trigger the cell value changed event.
+        var rowIndex = Math.floor(cell.index / this.numColumns);
+        var columnIndex = cell.index - (this.numColumns * rowIndex);
+        this.triggerEvent('cellValueChanged', {
+            cellIndex: cell.index,
+            cellValue: cellValue,
+            columnIndex: columnIndex,
+            rowIndex: rowIndex,
+        });
+    }.bind(this));
+};
+
+EditableTable.prototype.moveActive = function(activeIndex, selectAllText) {
+    var target = this.table.find('tr td:eq(' + activeIndex + ')');
+    var targetElem = target.get(0);
+
+    // Only allow columns marked as editable to be activated.
+    if (!targetElem || targetElem.contentEditable !== 'true') {
+        return false;
+    }
+
+    // Make sure we are able to set the text selection successfully.
+    if (!this.setSelection(target, selectAllText)) {
+        return false;
+    }
+
+    this.activeIndex = activeIndex;
+    this.table.find('.editable-cell-inactive').removeClass('editable-cell-inactive');
+
+    if (this.table.find('tr td').eq(this.activeIndex).hasClass('dimmed')) {
+        this.table.find('.active').addClass('editable-cell-inactive').blur();
+        this.table.find('.active-dimmed').removeClass('active-dimmed');
+        this.table.find('tr td').eq(this.activeIndex).addClass('active-dimmed');
+    }
+    else {
+        this.table.find('.active').removeClass('active');
+        this.table.find('tr td').eq(this.activeIndex).addClass('active');
+    }
+
+    if (target.length) {
+        var top = target.offset().top;
+        $('html,body').stop().animate({ scrollTop: top - 100 }, 400);
+        this.showQuickCopy(this.activeIndex);
+    }
+
+    return true;
+};
+
+EditableTable.prototype.setSelection = function(el, selectAllText) {
+    var node = el.focus()[0];
+    if (!node) {
+        return false;
+    }
+
+    var range = document.createRange();
+    range.selectNodeContents(node);
+
+    if (!selectAllText) {
+        range.collapse(false);
+    }
+
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    return true;
+};
+        </script>
+    </head>
+    <body>
+        <div class="well" style="overflow-x: auto">
+            <p>
+            <button type="button" class="btn btn-primary" name="save" data-unitid="8" data-action="saveunits">Save Capacity Availability Units</button>
+            </p>
+            <div class="container">
+            <table id="editable-table-8" class="table table-bordered">
+            <thead id="editable-table-head-8">
+             <tr><th>TimeSlot</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th></tr></thead>
+            <tbody id="editable-table-body-8">
+            <tr><td>0:00 - 0:15 AM</td><td contenteditable="true" data-index="1">0</td><td contenteditable="true" data-index="2">1</td><td contenteditable="true" data-index="3">20</td><td contenteditable="true" data-index="4">1</td><td contenteditable="true" data-index="5">1</td><td contenteditable="true" data-index="6">1</td><td contenteditable="true" data-index="7">1</td></tr><tr><td>0:15 - 0:30 AM</td><td contenteditable="true" data-index="9">21</td><td contenteditable="true" data-index="10">22</td><td contenteditable="true" data-index="11">21</td><td contenteditable="true" data-index="12">1</td><td contenteditable="true" data-index="13">0</td><td contenteditable="true" data-index="14">0</td><td contenteditable="true" data-index="15">0</td></tr><tr><td>0:30 - 0:45 AM</td><td contenteditable="true" data-index="17">23</td><td contenteditable="true" data-index="18">34</td><td contenteditable="true" data-index="19">23</td><td contenteditable="true" data-index="20">0</td><td contenteditable="true" data-index="21">0</td><td contenteditable="true" data-index="22">0</td><td contenteditable="true" data-index="23">0</td></tr><tr><td>0:45 - 1:00 AM</td><td contenteditable="true" data-index="25">20</td><td contenteditable="true" data-index="26">30</td><td contenteditable="true" data-index="27">20</td><td contenteditable="true" data-index="28">0</td><td contenteditable="true" data-index="29">0</td><td contenteditable="true" data-index="30">0</td><td contenteditable="true" data-index="31">0</td></tr><tr><td>1:00 - 1:15 AM</td><td contenteditable="true" data-index="33">21</td><td contenteditable="true" data-index="34">22</td><td contenteditable="true" data-index="35">21</td><td contenteditable="true" data-index="36">0</td><td contenteditable="true" data-index="37">0</td><td contenteditable="true" data-index="38">0</td><td contenteditable="true" data-index="39">0</td></tr><tr><td>1:15 - 1:30 AM</td><td contenteditable="true" data-index="41">23</td><td contenteditable="true" data-index="42">34</td><td contenteditable="true" data-index="43">23</td><td contenteditable="true" data-index="44">0</td><td contenteditable="true" data-index="45">0</td><td contenteditable="true" data-index="46">0</td><td contenteditable="true" data-index="47">0</td></tr><tr><td>1:30 - 1:45 AM</td><td contenteditable="true" data-index="49">20</td><td contenteditable="true" data-index="50">30</td><td contenteditable="true" data-index="51">20</td><td contenteditable="true" data-index="52">0</td><td contenteditable="true" data-index="53">0</td><td contenteditable="true" data-index="54">0</td><td contenteditable="true" data-index="55">0</td></tr><tr><td>1:45 - 2:00 AM</td><td contenteditable="true" data-index="57">21</td><td contenteditable="true" data-index="58">22</td><td contenteditable="true" data-index="59">21</td><td contenteditable="true" data-index="60">0</td><td contenteditable="true" data-index="61">0</td><td contenteditable="true" data-index="62">0</td><td contenteditable="true" data-index="63">0</td></tr><tr><td>2:00 - 2:15 AM</td><td contenteditable="true" data-index="65">23</td><td contenteditable="true" data-index="66">34</td><td contenteditable="true" data-index="67">23</td><td contenteditable="true" data-index="68">0</td><td contenteditable="true" data-index="69">0</td><td contenteditable="true" data-index="70">0</td><td contenteditable="true" data-index="71">0</td></tr><tr><td>2:15 - 2:30 AM</td><td contenteditable="true" data-index="73">20</td><td contenteditable="true" data-index="74">30</td><td contenteditable="true" data-index="75">20</td><td contenteditable="true" data-index="76">0</td><td contenteditable="true" data-index="77">0</td><td contenteditable="true" data-index="78">0</td><td contenteditable="true" data-index="79">0</td></tr><tr><td>2:30 - 2:45 AM</td><td contenteditable="true" data-index="81">21</td><td contenteditable="true" data-index="82">22</td><td contenteditable="true" data-index="83">21</td><td contenteditable="true" data-index="84">0</td><td contenteditable="true" data-index="85">0</td><td contenteditable="true" data-index="86">0</td><td contenteditable="true" data-index="87">0</td></tr><tr><td>2:45 - 3:00 AM</td><td contenteditable="true" data-index="89">0</td><td contenteditable="true" data-index="90">0</td><td contenteditable="true" data-index="91">0</td><td contenteditable="true" data-index="92">0</td><td contenteditable="true" data-index="93">0</td><td contenteditable="true" data-index="94">0</td><td contenteditable="true" data-index="95">0</td></tr><tr><td>3:00 - 3:15 AM</td><td contenteditable="true" data-index="97">0</td><td contenteditable="true" data-index="98">0</td><td contenteditable="true" data-index="99">0</td><td contenteditable="true" data-index="100">0</td><td contenteditable="true" data-index="101">0</td><td contenteditable="true" data-index="102">0</td><td contenteditable="true" data-index="103">0</td></tr><tr><td>3:15 - 3:30 AM</td><td contenteditable="true" data-index="105">0</td><td contenteditable="true" data-index="106">0</td><td contenteditable="true" data-index="107">0</td><td contenteditable="true" data-index="108">0</td><td contenteditable="true" data-index="109">0</td><td contenteditable="true" data-index="110">0</td><td contenteditable="true" data-index="111">0</td></tr><tr><td>3:30 - 3:45 AM</td><td contenteditable="true" data-index="113">0</td><td contenteditable="true" data-index="114">0</td><td contenteditable="true" data-index="115">0</td><td contenteditable="true" data-index="116">0</td><td contenteditable="true" data-index="117">0</td><td contenteditable="true" data-index="118">0</td><td contenteditable="true" data-index="119">0</td></tr><tr><td>3:45 - 4:00 AM</td><td contenteditable="true" data-index="121">0</td><td contenteditable="true" data-index="122">0</td><td contenteditable="true" data-index="123">0</td><td contenteditable="true" data-index="124">0</td><td contenteditable="true" data-index="125">0</td><td contenteditable="true" data-index="126">0</td><td contenteditable="true" data-index="127">0</td></tr><tr><td>4:00 - 4:15 AM</td><td contenteditable="true" data-index="129">0</td><td contenteditable="true" data-index="130">0</td><td contenteditable="true" data-index="131">0</td><td contenteditable="true" data-index="132">0</td><td contenteditable="true" data-index="133">0</td><td contenteditable="true" data-index="134">0</td><td contenteditable="true" data-index="135">0</td></tr><tr><td>4:15 - 4:30 AM</td><td contenteditable="true" data-index="137">0</td><td contenteditable="true" data-index="138">0</td><td contenteditable="true" data-index="139">0</td><td contenteditable="true" data-index="140">0</td><td contenteditable="true" data-index="141">0</td><td contenteditable="true" data-index="142">0</td><td contenteditable="true" data-index="143">0</td></tr><tr><td>4:30 - 4:45 AM</td><td contenteditable="true" data-index="145">0</td><td contenteditable="true" data-index="146">0</td><td contenteditable="true" data-index="147">0</td><td contenteditable="true" data-index="148">0</td><td contenteditable="true" data-index="149">0</td><td contenteditable="true" data-index="150">0</td><td contenteditable="true" data-index="151">0</td></tr><tr><td>4:45 - 5:00 AM</td><td contenteditable="true" data-index="153">0</td><td contenteditable="true" data-index="154">0</td><td contenteditable="true" data-index="155">0</td><td contenteditable="true" data-index="156">0</td><td contenteditable="true" data-index="157">0</td><td contenteditable="true" data-index="158">0</td><td contenteditable="true" data-index="159">0</td></tr><tr><td>5:00 - 5:15 AM</td><td contenteditable="true" data-index="161">0</td><td contenteditable="true" data-index="162">0</td><td contenteditable="true" data-index="163">0</td><td contenteditable="true" data-index="164">0</td><td contenteditable="true" data-index="165">0</td><td contenteditable="true" data-index="166">0</td><td contenteditable="true" data-index="167">0</td></tr><tr><td>5:15 - 5:30 AM</td><td contenteditable="true" data-index="169">0</td><td contenteditable="true" data-index="170">0</td><td contenteditable="true" data-index="171">0</td><td contenteditable="true" data-index="172">0</td><td contenteditable="true" data-index="173">0</td><td contenteditable="true" data-index="174">0</td><td contenteditable="true" data-index="175">0</td></tr><tr><td>5:30 - 5:45 AM</td><td contenteditable="true" data-index="177">0</td><td contenteditable="true" data-index="178">0</td><td contenteditable="true" data-index="179">0</td><td contenteditable="true" data-index="180">0</td><td contenteditable="true" data-index="181">0</td><td contenteditable="true" data-index="182">0</td><td contenteditable="true" data-index="183">0</td></tr><tr><td>5:45 - 6:00 AM</td><td contenteditable="true" data-index="185">0</td><td contenteditable="true" data-index="186">0</td><td contenteditable="true" data-index="187">0</td><td contenteditable="true" data-index="188">0</td><td contenteditable="true" data-index="189">0</td><td contenteditable="true" data-index="190">0</td><td contenteditable="true" data-index="191">0</td></tr><tr><td>6:00 - 6:15 AM</td><td contenteditable="true" data-index="193">0</td><td contenteditable="true" data-index="194">0</td><td contenteditable="true" data-index="195">0</td><td contenteditable="true" data-index="196">0</td><td contenteditable="true" data-index="197">0</td><td contenteditable="true" data-index="198">0</td><td contenteditable="true" data-index="199">0</td></tr><tr><td>6:15 - 6:30 AM</td><td contenteditable="true" data-index="201">0</td><td contenteditable="true" data-index="202">0</td><td contenteditable="true" data-index="203">0</td><td contenteditable="true" data-index="204">0</td><td contenteditable="true" data-index="205">0</td><td contenteditable="true" data-index="206">0</td><td contenteditable="true" data-index="207">0</td></tr><tr><td>6:30 - 6:45 AM</td><td contenteditable="true" data-index="209">0</td><td contenteditable="true" data-index="210">0</td><td contenteditable="true" data-index="211">0</td><td contenteditable="true" data-index="212">0</td><td contenteditable="true" data-index="213">0</td><td contenteditable="true" data-index="214">0</td><td contenteditable="true" data-index="215">0</td></tr><tr><td>6:45 - 7:00 AM</td><td contenteditable="true" data-index="217">0</td><td contenteditable="true" data-index="218">0</td><td contenteditable="true" data-index="219">0</td><td contenteditable="true" data-index="220">0</td><td contenteditable="true" data-index="221">0</td><td contenteditable="true" data-index="222">0</td><td contenteditable="true" data-index="223">0</td></tr><tr><td>7:00 - 7:15 AM</td><td contenteditable="true" data-index="225">0</td><td contenteditable="true" data-index="226">0</td><td contenteditable="true" data-index="227">0</td><td contenteditable="true" data-index="228">0</td><td contenteditable="true" data-index="229">0</td><td contenteditable="true" data-index="230">0</td><td contenteditable="true" data-index="231">0</td></tr><tr><td>7:15 - 7:30 AM</td><td contenteditable="true" data-index="233">0</td><td contenteditable="true" data-index="234">0</td><td contenteditable="true" data-index="235">0</td><td contenteditable="true" data-index="236">0</td><td contenteditable="true" data-index="237">0</td><td contenteditable="true" data-index="238">0</td><td contenteditable="true" data-index="239">0</td></tr><tr><td>7:30 - 7:45 AM</td><td contenteditable="true" data-index="241">0</td><td contenteditable="true" data-index="242">0</td><td contenteditable="true" data-index="243">0</td><td contenteditable="true" data-index="244">0</td><td contenteditable="true" data-index="245">0</td><td contenteditable="true" data-index="246">0</td><td contenteditable="true" data-index="247">0</td></tr><tr><td>7:45 - 8:00 AM</td><td contenteditable="true" data-index="249">0</td><td contenteditable="true" data-index="250">0</td><td contenteditable="true" data-index="251">0</td><td contenteditable="true" data-index="252">0</td><td contenteditable="true" data-index="253">0</td><td contenteditable="true" data-index="254">0</td><td contenteditable="true" data-index="255">0</td></tr><tr><td>8:00 - 8:15 AM</td><td contenteditable="true" data-index="257">0</td><td contenteditable="true" data-index="258">0</td><td contenteditable="true" data-index="259">0</td><td contenteditable="true" data-index="260">0</td><td contenteditable="true" data-index="261">0</td><td contenteditable="true" data-index="262">0</td><td contenteditable="true" data-index="263">0</td></tr><tr><td>8:15 - 8:30 AM</td><td contenteditable="true" data-index="265">0</td><td contenteditable="true" data-index="266">0</td><td contenteditable="true" data-index="267">0</td><td contenteditable="true" data-index="268">0</td><td contenteditable="true" data-index="269">0</td><td contenteditable="true" data-index="270">0</td><td contenteditable="true" data-index="271">0</td></tr><tr><td>8:30 - 8:45 AM</td><td contenteditable="true" data-index="273">0</td><td contenteditable="true" data-index="274">0</td><td contenteditable="true" data-index="275">0</td><td contenteditable="true" data-index="276">0</td><td contenteditable="true" data-index="277">0</td><td contenteditable="true" data-index="278">0</td><td contenteditable="true" data-index="279">0</td></tr><tr><td>8:45 - 9:00 AM</td><td contenteditable="true" data-index="281">0</td><td contenteditable="true" data-index="282">0</td><td contenteditable="true" data-index="283">0</td><td contenteditable="true" data-index="284">0</td><td contenteditable="true" data-index="285">0</td><td contenteditable="true" data-index="286">0</td><td contenteditable="true" data-index="287">0</td></tr><tr><td>9:00 - 9:15 AM</td><td contenteditable="true" data-index="289">0</td><td contenteditable="true" data-index="290">0</td><td contenteditable="true" data-index="291">0</td><td contenteditable="true" data-index="292">0</td><td contenteditable="true" data-index="293">0</td><td contenteditable="true" data-index="294">0</td><td contenteditable="true" data-index="295">0</td></tr><tr><td>9:15 - 9:30 AM</td><td contenteditable="true" data-index="297">0</td><td contenteditable="true" data-index="298">0</td><td contenteditable="true" data-index="299">0</td><td contenteditable="true" data-index="300">0</td><td contenteditable="true" data-index="301">0</td><td contenteditable="true" data-index="302">0</td><td contenteditable="true" data-index="303">0</td></tr><tr><td>9:30 - 9:45 AM</td><td contenteditable="true" data-index="305">0</td><td contenteditable="true" data-index="306">0</td><td contenteditable="true" data-index="307">0</td><td contenteditable="true" data-index="308">0</td><td contenteditable="true" data-index="309">0</td><td contenteditable="true" data-index="310">0</td><td contenteditable="true" data-index="311">0</td></tr><tr><td>9:45 - 10:00 AM</td><td contenteditable="true" data-index="313">0</td><td contenteditable="true" data-index="314">0</td><td contenteditable="true" data-index="315">0</td><td contenteditable="true" data-index="316">0</td><td contenteditable="true" data-index="317">0</td><td contenteditable="true" data-index="318">0</td><td contenteditable="true" data-index="319">0</td></tr><tr><td>10:00 - 10:15 AM</td><td contenteditable="true" data-index="321">0</td><td contenteditable="true" data-index="322">0</td><td contenteditable="true" data-index="323">0</td><td contenteditable="true" data-index="324">0</td><td contenteditable="true" data-index="325">0</td><td contenteditable="true" data-index="326">0</td><td contenteditable="true" data-index="327">0</td></tr><tr><td>10:15 - 10:30 AM</td><td contenteditable="true" data-index="329">0</td><td contenteditable="true" data-index="330">0</td><td contenteditable="true" data-index="331">0</td><td contenteditable="true" data-index="332">0</td><td contenteditable="true" data-index="333">0</td><td contenteditable="true" data-index="334">0</td><td contenteditable="true" data-index="335">0</td></tr><tr><td>10:30 - 10:45 AM</td><td contenteditable="true" data-index="337">0</td><td contenteditable="true" data-index="338">0</td><td contenteditable="true" data-index="339">0</td><td contenteditable="true" data-index="340">0</td><td contenteditable="true" data-index="341">0</td><td contenteditable="true" data-index="342">0</td><td contenteditable="true" data-index="343">0</td></tr><tr><td>10:45 - 11:00 AM</td><td contenteditable="true" data-index="345">0</td><td contenteditable="true" data-index="346">0</td><td contenteditable="true" data-index="347">0</td><td contenteditable="true" data-index="348">0</td><td contenteditable="true" data-index="349">0</td><td contenteditable="true" data-index="350">0</td><td contenteditable="true" data-index="351">0</td></tr><tr><td>11:00 - 11:15 AM</td><td contenteditable="true" data-index="353">0</td><td contenteditable="true" data-index="354">0</td><td contenteditable="true" data-index="355">0</td><td contenteditable="true" data-index="356">0</td><td contenteditable="true" data-index="357">0</td><td contenteditable="true" data-index="358">0</td><td contenteditable="true" data-index="359">0</td></tr><tr><td>11:15 - 11:30 AM</td><td contenteditable="true" data-index="361">0</td><td contenteditable="true" data-index="362">0</td><td contenteditable="true" data-index="363">0</td><td contenteditable="true" data-index="364">0</td><td contenteditable="true" data-index="365">0</td><td contenteditable="true" data-index="366">0</td><td contenteditable="true" data-index="367">0</td></tr><tr><td>11:30 - 11:45 AM</td><td contenteditable="true" data-index="369">0</td><td contenteditable="true" data-index="370">0</td><td contenteditable="true" data-index="371">0</td><td contenteditable="true" data-index="372">0</td><td contenteditable="true" data-index="373">0</td><td contenteditable="true" data-index="374">0</td><td contenteditable="true" data-index="375">0</td></tr><tr><td>11:45 - 12:00 PM</td><td contenteditable="true" data-index="377">0</td><td contenteditable="true" data-index="378">0</td><td contenteditable="true" data-index="379">0</td><td contenteditable="true" data-index="380">0</td><td contenteditable="true" data-index="381">0</td><td contenteditable="true" data-index="382">0</td><td contenteditable="true" data-index="383">0</td></tr><tr><td>12:00 - 12:15 PM</td><td contenteditable="true" data-index="385">0</td><td contenteditable="true" data-index="386">0</td><td contenteditable="true" data-index="387">0</td><td contenteditable="true" data-index="388">0</td><td contenteditable="true" data-index="389">0</td><td contenteditable="true" data-index="390">0</td><td contenteditable="true" data-index="391">0</td></tr><tr><td>12:15 - 12:30 PM</td><td contenteditable="true" data-index="393">0</td><td contenteditable="true" data-index="394">0</td><td contenteditable="true" data-index="395">0</td><td contenteditable="true" data-index="396">0</td><td contenteditable="true" data-index="397">0</td><td contenteditable="true" data-index="398">0</td><td contenteditable="true" data-index="399">0</td></tr><tr><td>12:30 - 12:45 PM</td><td contenteditable="true" data-index="401">0</td><td contenteditable="true" data-index="402">0</td><td contenteditable="true" data-index="403">0</td><td contenteditable="true" data-index="404">0</td><td contenteditable="true" data-index="405">0</td><td contenteditable="true" data-index="406">0</td><td contenteditable="true" data-index="407">0</td></tr><tr><td>12:45 - 1:00 PM</td><td contenteditable="true" data-index="409">0</td><td contenteditable="true" data-index="410">0</td><td contenteditable="true" data-index="411">0</td><td contenteditable="true" data-index="412">0</td><td contenteditable="true" data-index="413">0</td><td contenteditable="true" data-index="414">0</td><td contenteditable="true" data-index="415">0</td></tr><tr><td>1:00 - 1:15 PM</td><td contenteditable="true" data-index="417">0</td><td contenteditable="true" data-index="418">0</td><td contenteditable="true" data-index="419">0</td><td contenteditable="true" data-index="420">0</td><td contenteditable="true" data-index="421">0</td><td contenteditable="true" data-index="422">0</td><td contenteditable="true" data-index="423">0</td></tr><tr><td>1:15 - 1:30 PM</td><td contenteditable="true" data-index="425">0</td><td contenteditable="true" data-index="426">0</td><td contenteditable="true" data-index="427">0</td><td contenteditable="true" data-index="428">0</td><td contenteditable="true" data-index="429">0</td><td contenteditable="true" data-index="430">0</td><td contenteditable="true" data-index="431">0</td></tr><tr><td>1:30 - 1:45 PM</td><td contenteditable="true" data-index="433">0</td><td contenteditable="true" data-index="434">0</td><td contenteditable="true" data-index="435">0</td><td contenteditable="true" data-index="436">0</td><td contenteditable="true" data-index="437">0</td><td contenteditable="true" data-index="438">0</td><td contenteditable="true" data-index="439">0</td></tr><tr><td>1:45 - 2:00 PM</td><td contenteditable="true" data-index="441">0</td><td contenteditable="true" data-index="442">0</td><td contenteditable="true" data-index="443">0</td><td contenteditable="true" data-index="444">0</td><td contenteditable="true" data-index="445">0</td><td contenteditable="true" data-index="446">0</td><td contenteditable="true" data-index="447">0</td></tr><tr><td>2:00 - 2:15 PM</td><td contenteditable="true" data-index="449">0</td><td contenteditable="true" data-index="450">0</td><td contenteditable="true" data-index="451">0</td><td contenteditable="true" data-index="452">0</td><td contenteditable="true" data-index="453">0</td><td contenteditable="true" data-index="454">0</td><td contenteditable="true" data-index="455">0</td></tr><tr><td>2:15 - 2:30 PM</td><td contenteditable="true" data-index="457">0</td><td contenteditable="true" data-index="458">0</td><td contenteditable="true" data-index="459">0</td><td contenteditable="true" data-index="460">0</td><td contenteditable="true" data-index="461">0</td><td contenteditable="true" data-index="462">0</td><td contenteditable="true" data-index="463">0</td></tr><tr><td>2:30 - 2:45 PM</td><td contenteditable="true" data-index="465">0</td><td contenteditable="true" data-index="466">0</td><td contenteditable="true" data-index="467">0</td><td contenteditable="true" data-index="468">0</td><td contenteditable="true" data-index="469">0</td><td contenteditable="true" data-index="470">0</td><td contenteditable="true" data-index="471">0</td></tr><tr><td>2:45 - 3:00 PM</td><td contenteditable="true" data-index="473">0</td><td contenteditable="true" data-index="474">0</td><td contenteditable="true" data-index="475">0</td><td contenteditable="true" data-index="476">0</td><td contenteditable="true" data-index="477">0</td><td contenteditable="true" data-index="478">0</td><td contenteditable="true" data-index="479">0</td></tr><tr><td>3:00 - 3:15 PM</td><td contenteditable="true" data-index="481">0</td><td contenteditable="true" data-index="482">0</td><td contenteditable="true" data-index="483">0</td><td contenteditable="true" data-index="484">0</td><td contenteditable="true" data-index="485">0</td><td contenteditable="true" data-index="486">0</td><td contenteditable="true" data-index="487">0</td></tr><tr><td>3:15 - 3:30 PM</td><td contenteditable="true" data-index="489">0</td><td contenteditable="true" data-index="490">0</td><td contenteditable="true" data-index="491">0</td><td contenteditable="true" data-index="492">0</td><td contenteditable="true" data-index="493">0</td><td contenteditable="true" data-index="494">0</td><td contenteditable="true" data-index="495">0</td></tr><tr><td>3:30 - 3:45 PM</td><td contenteditable="true" data-index="497">0</td><td contenteditable="true" data-index="498">0</td><td contenteditable="true" data-index="499">0</td><td contenteditable="true" data-index="500">0</td><td contenteditable="true" data-index="501">0</td><td contenteditable="true" data-index="502">0</td><td contenteditable="true" data-index="503">0</td></tr><tr><td>3:45 - 4:00 PM</td><td contenteditable="true" data-index="505">0</td><td contenteditable="true" data-index="506">0</td><td contenteditable="true" data-index="507">0</td><td contenteditable="true" data-index="508">0</td><td contenteditable="true" data-index="509">0</td><td contenteditable="true" data-index="510">0</td><td contenteditable="true" data-index="511">0</td></tr><tr><td>4:00 - 4:15 PM</td><td contenteditable="true" data-index="513">0</td><td contenteditable="true" data-index="514">0</td><td contenteditable="true" data-index="515">0</td><td contenteditable="true" data-index="516">0</td><td contenteditable="true" data-index="517">0</td><td contenteditable="true" data-index="518">0</td><td contenteditable="true" data-index="519">0</td></tr><tr><td>4:15 - 4:30 PM</td><td contenteditable="true" data-index="521">0</td><td contenteditable="true" data-index="522">0</td><td contenteditable="true" data-index="523">0</td><td contenteditable="true" data-index="524">0</td><td contenteditable="true" data-index="525">0</td><td contenteditable="true" data-index="526">0</td><td contenteditable="true" data-index="527">0</td></tr><tr><td>4:30 - 4:45 PM</td><td contenteditable="true" data-index="529">0</td><td contenteditable="true" data-index="530">0</td><td contenteditable="true" data-index="531">0</td><td contenteditable="true" data-index="532">0</td><td contenteditable="true" data-index="533">0</td><td contenteditable="true" data-index="534">0</td><td contenteditable="true" data-index="535">0</td></tr><tr><td>4:45 - 5:00 PM</td><td contenteditable="true" data-index="537">0</td><td contenteditable="true" data-index="538">0</td><td contenteditable="true" data-index="539">0</td><td contenteditable="true" data-index="540">0</td><td contenteditable="true" data-index="541">0</td><td contenteditable="true" data-index="542">0</td><td contenteditable="true" data-index="543">0</td></tr><tr><td>5:00 - 5:15 PM</td><td contenteditable="true" data-index="545">0</td><td contenteditable="true" data-index="546">0</td><td contenteditable="true" data-index="547">0</td><td contenteditable="true" data-index="548">0</td><td contenteditable="true" data-index="549">0</td><td contenteditable="true" data-index="550">0</td><td contenteditable="true" data-index="551">0</td></tr><tr><td>5:15 - 5:30 PM</td><td contenteditable="true" data-index="553">0</td><td contenteditable="true" data-index="554">0</td><td contenteditable="true" data-index="555">0</td><td contenteditable="true" data-index="556">0</td><td contenteditable="true" data-index="557">0</td><td contenteditable="true" data-index="558">0</td><td contenteditable="true" data-index="559">0</td></tr><tr><td>5:30 - 5:45 PM</td><td contenteditable="true" data-index="561">0</td><td contenteditable="true" data-index="562">0</td><td contenteditable="true" data-index="563">0</td><td contenteditable="true" data-index="564">0</td><td contenteditable="true" data-index="565">0</td><td contenteditable="true" data-index="566">0</td><td contenteditable="true" data-index="567">0</td></tr><tr><td>5:45 - 6:00 PM</td><td contenteditable="true" data-index="569">0</td><td contenteditable="true" data-index="570">0</td><td contenteditable="true" data-index="571">0</td><td contenteditable="true" data-index="572">0</td><td contenteditable="true" data-index="573">0</td><td contenteditable="true" data-index="574">0</td><td contenteditable="true" data-index="575">0</td></tr><tr><td>6:00 - 6:15 PM</td><td contenteditable="true" data-index="577">0</td><td contenteditable="true" data-index="578">0</td><td contenteditable="true" data-index="579">0</td><td contenteditable="true" data-index="580">0</td><td contenteditable="true" data-index="581">0</td><td contenteditable="true" data-index="582">0</td><td contenteditable="true" data-index="583">0</td></tr><tr><td>6:15 - 6:30 PM</td><td contenteditable="true" data-index="585">0</td><td contenteditable="true" data-index="586">0</td><td contenteditable="true" data-index="587">0</td><td contenteditable="true" data-index="588">0</td><td contenteditable="true" data-index="589">0</td><td contenteditable="true" data-index="590">0</td><td contenteditable="true" data-index="591">0</td></tr><tr><td>6:30 - 6:45 PM</td><td contenteditable="true" data-index="593">0</td><td contenteditable="true" data-index="594">0</td><td contenteditable="true" data-index="595">0</td><td contenteditable="true" data-index="596">0</td><td contenteditable="true" data-index="597">0</td><td contenteditable="true" data-index="598">0</td><td contenteditable="true" data-index="599">0</td></tr><tr><td>6:45 - 7:00 PM</td><td contenteditable="true" data-index="601">0</td><td contenteditable="true" data-index="602">0</td><td contenteditable="true" data-index="603">0</td><td contenteditable="true" data-index="604">0</td><td contenteditable="true" data-index="605">0</td><td contenteditable="true" data-index="606">0</td><td contenteditable="true" data-index="607">0</td></tr><tr><td>7:00 - 7:15 PM</td><td contenteditable="true" data-index="609">0</td><td contenteditable="true" data-index="610">0</td><td contenteditable="true" data-index="611">0</td><td contenteditable="true" data-index="612">0</td><td contenteditable="true" data-index="613">0</td><td contenteditable="true" data-index="614">0</td><td contenteditable="true" data-index="615">0</td></tr><tr><td>7:15 - 7:30 PM</td><td contenteditable="true" data-index="617">0</td><td contenteditable="true" data-index="618">0</td><td contenteditable="true" data-index="619">0</td><td contenteditable="true" data-index="620">0</td><td contenteditable="true" data-index="621">0</td><td contenteditable="true" data-index="622">0</td><td contenteditable="true" data-index="623">0</td></tr><tr><td>7:30 - 7:45 PM</td><td contenteditable="true" data-index="625">0</td><td contenteditable="true" data-index="626">0</td><td contenteditable="true" data-index="627">0</td><td contenteditable="true" data-index="628">0</td><td contenteditable="true" data-index="629">0</td><td contenteditable="true" data-index="630">0</td><td contenteditable="true" data-index="631">0</td></tr><tr><td>7:45 - 8:00 PM</td><td contenteditable="true" data-index="633">0</td><td contenteditable="true" data-index="634">0</td><td contenteditable="true" data-index="635">0</td><td contenteditable="true" data-index="636">0</td><td contenteditable="true" data-index="637">0</td><td contenteditable="true" data-index="638">0</td><td contenteditable="true" data-index="639">0</td></tr><tr><td>8:00 - 8:15 PM</td><td contenteditable="true" data-index="641">0</td><td contenteditable="true" data-index="642">0</td><td contenteditable="true" data-index="643">0</td><td contenteditable="true" data-index="644">0</td><td contenteditable="true" data-index="645">0</td><td contenteditable="true" data-index="646">0</td><td contenteditable="true" data-index="647">0</td></tr><tr><td>8:15 - 8:30 PM</td><td contenteditable="true" data-index="649">0</td><td contenteditable="true" data-index="650">0</td><td contenteditable="true" data-index="651">0</td><td contenteditable="true" data-index="652">0</td><td contenteditable="true" data-index="653">0</td><td contenteditable="true" data-index="654">0</td><td contenteditable="true" data-index="655">0</td></tr><tr><td>8:30 - 8:45 PM</td><td contenteditable="true" data-index="657">0</td><td contenteditable="true" data-index="658">0</td><td contenteditable="true" data-index="659">0</td><td contenteditable="true" data-index="660">0</td><td contenteditable="true" data-index="661">0</td><td contenteditable="true" data-index="662">0</td><td contenteditable="true" data-index="663">0</td></tr><tr><td>8:45 - 9:00 PM</td><td contenteditable="true" data-index="665">0</td><td contenteditable="true" data-index="666">0</td><td contenteditable="true" data-index="667">0</td><td contenteditable="true" data-index="668">0</td><td contenteditable="true" data-index="669">0</td><td contenteditable="true" data-index="670">0</td><td contenteditable="true" data-index="671">0</td></tr><tr><td>9:00 - 9:15 PM</td><td contenteditable="true" data-index="673">0</td><td contenteditable="true" data-index="674">0</td><td contenteditable="true" data-index="675">0</td><td contenteditable="true" data-index="676">0</td><td contenteditable="true" data-index="677">0</td><td contenteditable="true" data-index="678">0</td><td contenteditable="true" data-index="679">0</td></tr><tr><td>9:15 - 9:30 PM</td><td contenteditable="true" data-index="681">0</td><td contenteditable="true" data-index="682">0</td><td contenteditable="true" data-index="683">0</td><td contenteditable="true" data-index="684">0</td><td contenteditable="true" data-index="685">0</td><td contenteditable="true" data-index="686">0</td><td contenteditable="true" data-index="687">0</td></tr><tr><td>9:30 - 9:45 PM</td><td contenteditable="true" data-index="689">0</td><td contenteditable="true" data-index="690">0</td><td contenteditable="true" data-index="691">0</td><td contenteditable="true" data-index="692">0</td><td contenteditable="true" data-index="693">0</td><td contenteditable="true" data-index="694">0</td><td contenteditable="true" data-index="695">0</td></tr><tr><td>9:45 - 10:00 PM</td><td contenteditable="true" data-index="697">0</td><td contenteditable="true" data-index="698">0</td><td contenteditable="true" data-index="699">0</td><td contenteditable="true" data-index="700">0</td><td contenteditable="true" data-index="701">0</td><td contenteditable="true" data-index="702">0</td><td contenteditable="true" data-index="703">0</td></tr><tr><td>10:00 - 10:15 PM</td><td contenteditable="true" data-index="705">0</td><td contenteditable="true" data-index="706">0</td><td contenteditable="true" data-index="707">0</td><td contenteditable="true" data-index="708">0</td><td contenteditable="true" data-index="709">0</td><td contenteditable="true" data-index="710">0</td><td contenteditable="true" data-index="711">0</td></tr><tr><td>10:15 - 10:30 PM</td><td contenteditable="true" data-index="713">0</td><td contenteditable="true" data-index="714">0</td><td contenteditable="true" data-index="715">0</td><td contenteditable="true" data-index="716">0</td><td contenteditable="true" data-index="717">0</td><td contenteditable="true" data-index="718">0</td><td contenteditable="true" data-index="719">0</td></tr><tr><td>10:30 - 10:45 PM</td><td contenteditable="true" data-index="721">0</td><td contenteditable="true" data-index="722">0</td><td contenteditable="true" data-index="723">0</td><td contenteditable="true" data-index="724">0</td><td contenteditable="true" data-index="725">0</td><td contenteditable="true" data-index="726">0</td><td contenteditable="true" data-index="727">0</td></tr><tr><td>10:45 - 11:00 PM</td><td contenteditable="true" data-index="729">0</td><td contenteditable="true" data-index="730">0</td><td contenteditable="true" data-index="731">0</td><td contenteditable="true" data-index="732">0</td><td contenteditable="true" data-index="733">0</td><td contenteditable="true" data-index="734">0</td><td contenteditable="true" data-index="735">0</td></tr><tr><td>11:00 - 11:15 PM</td><td contenteditable="true" data-index="737">0</td><td contenteditable="true" data-index="738">0</td><td contenteditable="true" data-index="739">0</td><td contenteditable="true" data-index="740">0</td><td contenteditable="true" data-index="741">0</td><td contenteditable="true" data-index="742">0</td><td contenteditable="true" data-index="743">0</td></tr><tr><td>11:15 - 11:30 PM</td><td contenteditable="true" data-index="745">0</td><td contenteditable="true" data-index="746">0</td><td contenteditable="true" data-index="747">0</td><td contenteditable="true" data-index="748">0</td><td contenteditable="true" data-index="749">0</td><td contenteditable="true" data-index="750">0</td><td contenteditable="true" data-index="751">0</td></tr><tr><td>11:30 - 11:45 PM</td><td contenteditable="true" data-index="753">0</td><td contenteditable="true" data-index="754">0</td><td contenteditable="true" data-index="755">0</td><td contenteditable="true" data-index="756">0</td><td contenteditable="true" data-index="757">0</td><td contenteditable="true" data-index="758">0</td><td contenteditable="true" data-index="759">0</td></tr><tr><td>11:45 - 12:00 AM</td><td contenteditable="true" data-index="761">100000</td><td contenteditable="true" data-index="762">0</td><td contenteditable="true" data-index="763">0</td><td contenteditable="true" data-index="764">0</td><td contenteditable="true" data-index="765">0</td><td contenteditable="true" data-index="766">0</td><td contenteditable="true" data-index="767">0</td></tr></tbody>
+            </table>
+            </div>
+            <div class="quick-copy-square" id="quickCopy8"></div>
+        </div>
+        <script>
+            var table = $('#editable-table-8');
+            var editableTable = new EditableTable(8);
+
+            editableTable.table = table;
+            editableTable.quickCopy = $('#quickCopy8');
+
+            table.find('tbody').find('td').each(function (index, element) {
+                if (element.contentEditable !== 'true') {
+                    return;
+                }
+
+                editableTable.configureCell($(element), index);
+            });
+        </script>
+    </body>
+</html>
