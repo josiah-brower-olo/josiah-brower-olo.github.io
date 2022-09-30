@@ -135,8 +135,8 @@ Object.defineProperty(EditableTable.prototype, 'table', {
     },
     set: function(value) {
         this.__table = value
-            .on('keypress', this.onTableKeyPress.bind(this))
-            .on('keydown', this.onTableKeyDown.bind(this));
+            .on('keypress', this.onTableKeyPress.bind(this));
+            // .on('keydown', this.onTableKeyDown.bind(this));
     },
 });
 
@@ -289,10 +289,6 @@ EditableTable.prototype.onTableKeyDown = function(event) {
                 if (event.keyCode === 67) { // c
                     // Copy the currently selected cell data.
                     var text = this.copy([].concat(this.selectedList));
-
-
-                    console.log('text:', text);
-
 
                     navigator.clipboard.writeText(text);
                     break;
