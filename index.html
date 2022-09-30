@@ -229,6 +229,12 @@ EditableTable.prototype.onTableKeyDown = function(event) {
     var start = 0;
     var activeIndex = this.activeIndex; // Using a local variable to track the active index in case the move is invalid.
 
+
+    console.log('onTableKeyDown');
+    console.log('event.keyCode:', event.keyCode);
+    console.log('event.metaKey:', event.metaKey);
+
+
     switch (event.keyCode) {
         case 37: { // move left or wrap
             event.preventDefault();
@@ -289,6 +295,10 @@ EditableTable.prototype.onTableKeyDown = function(event) {
                 if (event.keyCode === 67) { // c
                     // Copy the currently selected cell data.
                     var text = this.copy([].concat(this.selectedList));
+
+
+                    console.log('text:', text);
+
 
                     navigator.clipboard.writeText(text);
                     break;
